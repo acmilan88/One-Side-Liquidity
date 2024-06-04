@@ -1,0 +1,153 @@
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.18;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+interface INonfungiblePositionManager {
+    struct MintParams {
+        address token0;
+        address token1;
+        uint24 fee;
+        int24 tickLower;
+        int24 tickUpper;
+        uint256 amount0Desired;
+        uint256 amount1Desired;
+        uint256 amount0Min;
+        uint256 amount1Min;
+        address recipient;
+        uint256 deadline;
+    }
+    function mint(MintParams calldata params) external payable returns (
+        uint256 tokenId,
+        uint128 liquidity,
+        uint256 amount0,
+        uint256 amount1
+    );
+    function createAndInitializePoolIfNecessary(
+        address token0,
+        address token1,
+        uint24 fee,
+        uint160 sqrtPriceX96
+    ) external payable returns (address pool);
+}
+
+contract Meme is ERC20 {
+    INonfungiblePositionManager posMan = INonfungiblePositionManager(0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1); //base
+    address constant weth = 0x4200000000000000000000000000000000000006; // weth base
+    uint supply = 1_000_000 * 10 ** decimals();
+    uint24 constant fee = 500;
+    uint160 constant sqrtPriceX96 = 79228162514264337593543950336; // ~ 1:1
+    int24 minTick;
+    int24 maxTick;
+    address public pool;
+    address token0;
+    address token1;
+    uint amount0Desired;
+    uint amount1Desired;
+
+    address public memefactory;
+    address public memeCreator;
+    uint256 public feePercent; // in basis points, 1% = 100, 2% = 200
+    bool private liquidityAdded = false; // Flag to track whether liquidity has been added
+
+
+    event FeePercentUpdated(uint256 newFeePercent);
+    event MemeCreatorUpdated(address newMemeCreator);
+
+    constructor(
+        string memory _name,
+        string memory _symbol,
+        address _memefactory,
+        address _memeCreator,
+        uint256 _feePercent
+    ) ERC20(_name, _symbol) {
+        require(_feePercent <= 300, "Fee too high");
+        memefactory = _memefactory;
+        memeCreator = _memeCreator;
+        feePercent = _feePercent;
+        _mint(address(this), supply);
+        fixOrdering();
+        pool = posMan.createAndInitializePoolIfNecessary(token0, token1, fee, sqrtPriceX96);
+    }
+
+    modifier onlyMemefactory() {
+        require(msg.sender == memefactory, "Not memefactory");
+        _;
+    }
+
+    function setFeePercent(uint256 _feePercent) external onlyMemefactory {
+        require(_feePercent <= 300, "Fee too high");
+        feePercent = _feePercent;
+        emit FeePercentUpdated(_feePercent);
+    }
+
+    function setMemeCreator(address _memeCreator) external onlyMemefactory {
+        memeCreator = _memeCreator;
+        emit MemeCreatorUpdated(_memeCreator);
+    }
+
+    function addLiquidity() public {
+        IERC20(address(this)).approve(address(posMan), supply);
+        posMan.mint(INonfungiblePositionManager.MintParams({
+            token0: token0,
+            token1: token1,
+            fee: fee,
+            tickLower: minTick,
+            tickUpper: maxTick,
+            amount0Desired: amount0Desired,
+            amount1Desired: amount1Desired,
+            amount0Min: 0,
+            amount1Min: 0,
+            recipient: address(this),
+            deadline: block.timestamp + 1200
+        }));
+        liquidityAdded = true; // Set the flag to indicate liquidity has been added
+
+    }
+
+    function fixOrdering() private {
+        if (address(this) < weth) {
+            token0 = address(this);
+            token1 = weth;
+            amount0Desired = supply;
+            amount1Desired = 0;
+            minTick = 0;
+            maxTick = 887270;
+        } else {
+            token0 = weth;
+            token1 = address(this);
+            amount0Desired = 0;
+            amount1Desired = supply;
+            minTick = -887270;
+            maxTick = 0;
+        }
+    }
+
+    function transfer(address recipient, uint256 amount) public virtual override returns (bool) {
+        _transferWithFee(_msgSender(), recipient, amount);
+        return true;
+    }
+
+    function transferFrom(address sender, address recipient, uint256 amount) public virtual override returns (bool) {
+        _spendAllowance(sender, _msgSender(), amount);
+        _transferWithFee(sender, recipient, amount);
+        return true;
+    }
+
+function _transferWithFee(address sender, address recipient, uint256 amount) internal {
+    if (liquidityAdded) {
+        uint256 feeAmount = (amount * feePercent) / 10000;  // Calculate the total fee amount
+        uint256 factoryFee = feeAmount / 2;  // Half of the fee goes to memefactory
+        uint256 creatorFee = feeAmount - factoryFee;  // The other half (or remaining part) goes to memeCreator
+        uint256 amountAfterFee = amount - feeAmount;  // Amount to be received by the recipient after deducting the fee
+
+        _transfer(sender, memefactory, factoryFee);  // Transfer factory fee
+        _transfer(sender, memeCreator, creatorFee);  // Transfer creator fee
+        _transfer(sender, recipient, amountAfterFee);  // Transfer the remaining amount to recipient
+    } else {
+        // If liquidity hasn't been added, transfer the full amount to the recipient
+        _transfer(sender, recipient, amount);
+    }
+  }
+
+}
