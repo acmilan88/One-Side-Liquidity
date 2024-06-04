@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.18;
+
+import "./Meme2.sol";
+
+contract MemeFactory {
+    address public owner;
+    uint256 public tokenCreationFee = 0.000005 ether;
+    uint256 public feePercent = 200; // 2% fee in basis points
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event MemeTokenCreated(address indexed creator, address memeToken);
+    event TokenCreationFeeUpdated(uint256 newFee);
+    event FeePercentUpdated(uint256 newFeePercent);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only the owner can call this function");
+        _;
+    }
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Invalid new owner");
+        emit OwnershipTransferred(owner, newOwner);
+        owner = newOwner;
+    }
+
+    function updateTokenCreationFee(uint256 newFee) external onlyOwner {
+        tokenCreationFee = newFee;
+        emit TokenCreationFeeUpdated(newFee);
+    }
+
+    function updateFeePercent(uint256 newFeePercent) external onlyOwner {
+        require(newFeePercent <= 300, "Fee too high");
+        feePercent = newFeePercent;
+        emit FeePercentUpdated(newFeePercent);
+    }
+
+    function createMemeToken(string memory name, string memory symbol) external payable returns (address) {
+        require(msg.value >= tokenCreationFee, "Insufficient fee");
+
+        // Transfer fee to owner
+        if (msg.value > tokenCreationFee) {
+            payable(owner).transfer(msg.value - tokenCreationFee);
+        }
+
+        // Deploy Meme contract
+        Meme newMeme = new Meme(name, symbol, address(this), msg.sender, feePercent);
+        emit MemeTokenCreated(msg.sender, address(newMeme));
+        
+        return address(newMeme);
+    }
+
+    function MemefacortyFee(address memeToken, uint256 newFeePercent) external onlyOwner {
+        require(newFeePercent <= 300, "Fee too high");
+        Meme(memeToken).setFeePercent(newFeePercent);
+    }
+
+    function MemeCreatorTransfer(address memeToken, address newCreator) external onlyOwner {
+        Meme(memeToken).setMemeCreator(newCreator);
+    }
+
+    function withdraw() external onlyOwner {
+        payable(owner).transfer(address(this).balance);
+    }
+}
